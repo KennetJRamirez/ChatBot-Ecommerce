@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
 import pandas as pd
@@ -15,7 +15,7 @@ modelo = SentenceTransformer('distiluse-base-multilingual-cased-v2')
 
 class Query(BaseModel):
     texto: str
-
+    k: int = 5  # Cantidad de productos a mostrar
 df = None
 embeddings = None
 
@@ -39,8 +39,29 @@ def cargar_datos():
 
 @app.post("/recomendar")
 def recomendar(query: Query):
+    global df, embeddings
+    if embeddings is None or df is None:
+        raise HTTPException(status_code=503, detail="Datos no cargados aún")
+
+    if query.k <= 0:
+        raise HTTPException(status_code=400, detail="El parámetro k debe ser positivo")
+
     query_embedding = modelo.encode(query.texto, convert_to_tensor=True)
     scores = util.cos_sim(query_embedding, embeddings)[0]
-    top_indices = torch.topk(scores, k=5).indices
+
+    k = min(query.k, len(df))  # No pedir mas de lo indicado
+    top_indices = torch.topk(scores, k=k).indices
     resultados = df.iloc[top_indices.cpu().numpy()]
-    return resultados[['product_name', 'price', 'description']].to_dict(orient="records")
+
+    similitudes = scores[top_indices].cpu().tolist()
+
+    response = []
+    for i, row in resultados.iterrows():
+        response.append({
+            "product_name": row['product_name'],
+            "price": row['price'],
+            "description": row['description'],
+            "similarity_score": round(similitudes.pop(0), 4)
+        })
+
+    return response
