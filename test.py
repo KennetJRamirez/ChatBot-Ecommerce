@@ -3,15 +3,23 @@ from pydantic import BaseModel
 from sqlalchemy import create_engine, text
 import pandas as pd
 from sentence_transformers import SentenceTransformer, util
+from fastapi.middleware.cors import CORSMiddleware
 import torch
 import os
 
 app = FastAPI()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 DATABASE_URL = "postgresql://postgres:GWxecCCNwRQhCYWpzlMfPuNJXJkjKTBW@turntable.proxy.rlwy.net:32870/railway"
 engine = create_engine(DATABASE_URL)
-
-modelo = SentenceTransformer('distiluse-base-multilingual-cased-v2')
+modelo = SentenceTransformer('sentence-transformers/paraphrase-multilingual-mpnet-base-v2')
 
 class Query(BaseModel):
     texto: str
@@ -24,8 +32,14 @@ def cargar_datos():
     global df, embeddings
     print("Cargando productos desde DB...")
     with engine.connect() as conn:
-        df = pd.read_sql(text("SELECT product_id, product_name, description, price FROM productos"), conn)
-    df['texto'] = df['product_name'] + ' ' + df['description']
+        df = pd.read_sql(text("SELECT product_id, product_name, product_brand, gender, price, description, primary_color FROM productos"), conn)
+        df['texto'] = (
+            df['product_brand'].fillna('') + ' ' +
+            df['product_name'].fillna('') + '. ' +
+            df['gender'].fillna('') + '. ' +
+            df['primary_color'].fillna('') + '. ' +
+            df['description'].fillna('')
+        ).str.strip()
 
     if os.path.exists("embeddings.pt"):
         print("Cargando embeddings desde disco...")
@@ -36,6 +50,7 @@ def cargar_datos():
         torch.save(embeddings, "embeddings.pt")
 
     print("Backend listo.")
+
 
 @app.post("/recomendar")
 def recomendar(query: Query):
@@ -65,3 +80,8 @@ def recomendar(query: Query):
         })
 
     return response
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
